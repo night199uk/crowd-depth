@@ -19,9 +19,11 @@ import {
   registerBathymetryRoutes,
   BASE_ZOOM,
   BATHYMETRY_FORMAT,
+  MIN_ZOOM,
   DEPTH_SINCE_KEY,
   THROUGH_KEY,
   clearPendingBackfill,
+  recordBackfillFailure,
   type BathymetryMeta,
 } from "./tiles/index.js";
 import { registerPlotterExtension } from "./plotterext/provider.js";
@@ -75,6 +77,7 @@ export function startChart({
   const position = JSON.stringify({
     transducer: meta.transducer,
     baseZoom: BASE_ZOOM,
+    minZoom: MIN_ZOOM,
     format: BATHYMETRY_FORMAT,
   });
   const depth = JSON.stringify({
@@ -132,9 +135,27 @@ export function startChart({
         signal,
       }).catch((err: unknown) => {
         if (signal.aborted) return;
-        // Don't retry a failing span on every start; the live layer goes on.
-        clearPendingBackfill(store);
-        app.error(`Chart backfill failed: ${err}`);
+        // The span stays for the next start, a few times at most; the live
+        // layer goes on either way.
+        const retry = recordBackfillFailure(store);
+        app.error(
+          `Chart backfill failed${retry ? ", will retry on restart" : ""}: ${err}`,
+        );
       }),
   };
+}
+
+/**
+ * Start the chart layer unless it is turned off, without letting it stop the
+ * plugin: a failure here (a locked database, a refused provider) is logged and
+ * the plugin goes on collecting and sharing without the layer.
+ */
+export function startChartSafely(options: Parameters<typeof startChart>[0]) {
+  if (options.config.chart?.show === false) return undefined;
+  try {
+    return startChart(options);
+  } catch (err) {
+    options.app.error(`Chart layer failed to start: ${err}`);
+    return undefined;
+  }
 }

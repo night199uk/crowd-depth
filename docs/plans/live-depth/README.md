@@ -43,7 +43,7 @@ LiveDepth's collection code is derived from Crowd Depth's, and its LICENSE doesn
 ## Package changes
 
 - `packages/signalk-plugin` gains `src/tiles/`, `src/plotterext/` and `web/`, with `public/` built by esbuild and added to the package's `files`, so the pages ship to the AppStore.
-- `signalk-plotterext-bus` and `esbuild` become development dependencies. Express stays the server's, required at runtime as LiveDepth does.
+- `signalk-plotterext-bus` and `esbuild` become development dependencies. The pages are served with `res.sendFile` rather than Express's static middleware, since the plugin can't count on resolving `express`, which the server owns and is often installed elsewhere.
 - The plugin registers the `plotterExtensions` resource provider when the server supports it and skips the layer quietly when it doesn't, so older servers and other plotters see no change.
 - Settings: a "Show my soundings on the chart" switch, on by default, and the layer settings stay in the chart's panel.
 - The plugin's keywords add `signalk-category-chart-plotters`.

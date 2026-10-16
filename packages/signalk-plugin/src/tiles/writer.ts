@@ -45,9 +45,11 @@ function setThrough(store: TileStore, instant: Temporal.Instant) {
  * transaction per sample, which would wear out an SD card.
  *
  * Coarser levels are rebuilt from the base tiles touched since the last
- * rebuild: every {@link DEFAULT_ANCESTORS_MS} for the live writer, which also
- * advances the {@link THROUGH_KEY} marker, and once at the end for a `bulk`
- * writer, used by a backfill, whose caller records it as done.
+ * rebuild: every {@link DEFAULT_ANCESTORS_MS} for the live writer, and once at
+ * the end for a `bulk` writer, used by a backfill, whose caller records it as
+ * done. The live writer advances the {@link THROUGH_KEY} marker only when it
+ * rebuilds, so soundings whose coarser levels were never written, because the
+ * process died between rebuilds, are backfilled on the next start.
  *
  * Adapted from signalk-livedepth-plugin (MIT); see THIRD_PARTY_NOTICES.md.
  */
@@ -77,13 +79,12 @@ export function createTileWriter(
     rebuildAncestorsOf(store, touched.values(), { baseZoom });
     touched.clear();
     lastAncestors = Date.now();
+    if (!bulk && latest) setThrough(store, latest);
   };
 
   const flush = () => {
     accumulator.flush();
-    if (bulk) return;
-    if (Date.now() - lastAncestors >= ancestorsIntervalMs) rebuild();
-    if (latest) setThrough(store, latest);
+    if (!bulk && Date.now() - lastAncestors >= ancestorsIntervalMs) rebuild();
   };
 
   const writer: Writable = new Writable({
@@ -118,10 +119,19 @@ export function createTileWriter(
         callback(err as Error);
       }
     },
-    // A pipeline destroys its writer on abort, which does not run `final`.
-    // Without this the flush timer outlives the store.
+    // A pipeline destroys its writer on abort, which does not run `final`, so
+    // write what is held here too, or a plugin stop would leave the coarser
+    // levels without the last few minutes. Without the clear, the flush timer
+    // would outlive the store.
     destroy(error, callback) {
       clearInterval(timer);
+      try {
+        flush();
+        rebuild();
+      } catch {
+        // The store failed or is gone; the marker wasn't advanced, so the
+        // next start backfills what was lost.
+      }
       callback(error);
     },
   });

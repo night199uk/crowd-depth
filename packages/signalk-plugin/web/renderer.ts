@@ -46,9 +46,12 @@ const DEBOUNCE_MS = 400;
 /** Most tile fetches a single view may need before the layer draws nothing. */
 const MAX_TILE_FETCHES = 24;
 /** How often the view's tiles are refetched while visible, which picks up the
- * live soundings the plugin has written and lets the client's own copy of them
- * be dropped, so it never grows past a few minutes of soundings. */
+ * live soundings the plugin has written. */
 const REFETCH_MS = 60000;
+/** How long the client keeps its own live soundings. The plugin writes base
+ * tiles every 10 s but rebuilds the coarser levels only every 5 minutes, so
+ * anything younger may be missing from the served tiles. */
+const LIVE_KEEP_MS = 10 * 60000;
 /** Oldest a position, heading or course may be for a live depth to use it,
  * matching the plugin's live stream. */
 const LIVE_TTL_MS = 2000;
@@ -95,6 +98,8 @@ let lastZoom = 0;
 let clientStore = createMemoryTileStore();
 let clientAccumulator = createTileAccumulator(clientStore);
 let clientStoreSince = Date.now();
+/** The client's live soundings, oldest first, kept for {@link LIVE_KEEP_MS}. */
+let liveSoundings: { sounding: DepthSample; at: number }[] = [];
 let liveDirty = false;
 let liveFlushTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -218,16 +223,21 @@ async function fetchTiles(req: RenderRequest): Promise<void> {
   if (seq !== fetchSeq || failed) return;
   lastZoom = zoom;
   baseSamples = out;
-  // The served tiles now hold the live soundings the plugin wrote before this
-  // fetch; the client's own copy only needs what came after.
-  if (fetchedAt - clientStoreSince > REFETCH_MS) resetClientStore();
+  // Drop the client's soundings the served tiles hold by now, so its copy
+  // stays a few minutes long.
+  if (fetchedAt - clientStoreSince > LIVE_KEEP_MS) resetClientStore();
   compose();
 }
 
+/** Rebuild the client's store from its recent soundings only. */
 function resetClientStore(): void {
+  const cutoff = Date.now() - LIVE_KEEP_MS;
+  liveSoundings = liveSoundings.filter((s) => s.at >= cutoff);
   clientStore = createMemoryTileStore();
   clientAccumulator = createTileAccumulator(clientStore);
-  clientStoreSince = Date.now();
+  for (const { sounding } of liveSoundings) clientAccumulator.add(sounding);
+  clientAccumulator.flush();
+  clientStoreSince = liveSoundings[0]?.at ?? Date.now();
 }
 
 /** The client store's live soundings for the current view, at the level the
@@ -350,7 +360,9 @@ function sampleLive(depth: number): void {
   if (!at) return;
   const position = correct(at[0], at[1]);
   if (!position) return;
-  clientAccumulator.add({ ...position, depth: depth + depthOffset });
+  const sounding = { ...position, depth: depth + depthOffset };
+  clientAccumulator.add(sounding);
+  liveSoundings.push({ sounding, at: Date.now() });
   liveDirty = true;
 }
 

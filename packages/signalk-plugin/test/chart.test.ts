@@ -8,7 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { Temporal } from "@js-temporal/polyfill";
 import { app, config } from "./helper.js";
 import { Config } from "../src/config.js";
-import { chartMeta, startChart } from "../src/chart.js";
+import { chartMeta, startChart, startChartSafely } from "../src/chart.js";
 import { createDB } from "../src/storage.js";
 import { createSqliteSource } from "../src/sources/sqlite.js";
 import { correctForSensorPosition } from "../src/streams/index.js";
@@ -274,8 +274,10 @@ test("the backfill still runs after the live writer has moved the marker on", as
 
 test("an interrupted backfill is widened, not lost, on the next start", () => {
   const store = createTileStore(createDB(":memory:"));
+  store.setMeta("through", "2026-10-16T10:00:00Z");
   addPendingBackfill(store, at("2026-10-16T12:00:00Z"));
   const first = getPendingBackfill(store)!;
+  expect(first.from.toString()).toBe("2026-10-16T10:00:00Z");
   // The live writer ran for a while before the plugin restarted.
   store.setMeta("through", "2026-10-16T13:00:00Z");
   addPendingBackfill(store, at("2026-10-16T14:00:00Z"));
@@ -497,18 +499,124 @@ test("the backfill doesn't merge soundings past its span again", async () => {
   expect(store.read(BASE_ZOOM, x, y)).toBeUndefined();
 });
 
-test("a failing backfill gives up instead of retrying on every start", async () => {
+test("a failing backfill is retried on later starts, then given up", async () => {
+  // A source slow to come up at boot gets another chance; one that always
+  // fails doesn't cost every start forever.
   const db = createDB(":memory:");
   const { app: server } = serverApp();
-  const signal = new AbortController();
-  const chart = startChart({ app: server, config, db, signal: signal.signal });
-  const store = createTileStore(db);
-  expect(getPendingBackfill(store)).toBeDefined();
-
-  await chart.backfill({
+  const failing = {
     createReader: () => undefined,
     getAvailableTimeframes: () => Promise.reject(new Error("history down")),
+  };
+  const store = createTileStore(db);
+  for (let start = 1; start <= 3; start++) {
+    const signal = new AbortController();
+    const chart = startChart({
+      app: server,
+      config,
+      db,
+      signal: signal.signal,
+    });
+    await chart.backfill(failing);
+    if (start < 3) expect(getPendingBackfill(store)).toBeDefined();
+    else expect(getPendingBackfill(store)).toBeUndefined();
+    signal.abort();
+  }
+});
+
+test("the marker only moves once the coarser levels hold the soundings", () => {
+  // If the process dies between rebuilds, the next start backfills from the
+  // marker, so it must not be ahead of what the coarser levels hold.
+  vi.useFakeTimers();
+  try {
+    const store = createTileStore(createDB(":memory:"));
+    const writer = createTileWriter(store, {
+      flushIntervalMs: 10_000,
+      ancestorsIntervalMs: 300_000,
+    });
+    writer.write(
+      {
+        latitude: 0,
+        longitude: 0,
+        depth: 1.2,
+        timestamp: at("2026-10-16T08:00:00Z"),
+      },
+      () => {},
+    );
+    vi.advanceTimersByTime(20_000);
+    const base = lngLatToCell(0, 0, BASE_ZOOM);
+    const coarse = lngLatToCell(0, 0, 12);
+    expect(store.read(BASE_ZOOM, base.x, base.y)?.size).toBe(1);
+    expect(store.read(12, coarse.x, coarse.y)).toBeUndefined();
+    expect(getThrough(store)).toBeUndefined();
+
+    vi.advanceTimersByTime(300_000);
+    expect(store.read(12, coarse.x, coarse.y)?.size).toBe(1);
+    expect(getThrough(store)?.toString()).toBe("2026-10-16T08:00:00Z");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("stopping the live writer writes the coarser levels it held", () => {
+  // A plugin stop destroys the pipeline, which doesn't run the writer's end.
+  const store = createTileStore(createDB(":memory:"));
+  const writer = createTileWriter(store, {
+    flushIntervalMs: 100_000,
+    ancestorsIntervalMs: 300_000,
   });
-  expect(getPendingBackfill(store)).toBeUndefined();
+  writer.write(
+    {
+      latitude: 0,
+      longitude: 0,
+      depth: 1.2,
+      timestamp: at("2026-10-16T08:00:00Z"),
+    },
+    () => {},
+  );
+  writer.destroy();
+  const coarse = lngLatToCell(0, 0, 12);
+  expect(store.read(12, coarse.x, coarse.y)?.size).toBe(1);
+  expect(getThrough(store)?.toString()).toBe("2026-10-16T08:00:00Z");
+});
+
+test("the backfill never reaches back more than 30 days", () => {
+  const store = createTileStore(createDB(":memory:"));
+  // The layer was off for three months.
+  store.setMeta("through", "2026-07-16T00:00:00Z");
+  addPendingBackfill(store, at("2026-10-16T00:00:00Z"));
+  expect(getPendingBackfill(store)!.from.toString()).toBe(
+    "2026-09-16T00:00:00Z",
+  );
+});
+
+test("a chart that fails to start doesn't stop the plugin", () => {
+  const { app: server } = serverApp();
+  const errors: string[] = [];
+  const failing = Object.assign(server, {
+    registerResourceProvider: () => {
+      throw new Error("provider refused");
+    },
+    error: (message: string) => errors.push(message),
+  });
+  const signal = new AbortController();
+  expect(
+    startChartSafely({
+      app: failing,
+      config,
+      db: createDB(":memory:"),
+      signal: signal.signal,
+    }),
+  ).toBeUndefined();
+  expect(errors[0]).toMatch(/provider refused/);
   signal.abort();
+
+  expect(
+    startChartSafely({
+      app: server,
+      config: { ...config, chart: { show: false } },
+      db: createDB(":memory:"),
+      signal: signal.signal,
+    }),
+  ).toBeUndefined();
 });

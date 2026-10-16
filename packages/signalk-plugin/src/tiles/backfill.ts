@@ -31,25 +31,58 @@ export function getPendingBackfill(store: TileStore): Timeframe | undefined {
 
 /**
  * Record the span the live writer didn't see, before it starts writing: since
- * it last recorded, or {@link BACKFILL_PERIOD} for a new store, up to `until`.
- * A span left from a backfill that didn't finish is widened, not replaced, so
- * an interrupted backfill is run again in full, ancestors included.
+ * it last recorded, or {@link BACKFILL_PERIOD} for a new store, up to `until`,
+ * never more than {@link BACKFILL_PERIOD} back. A span left from a backfill
+ * that didn't finish is widened, not replaced, so an interrupted backfill is
+ * run again in full, ancestors included.
  */
 export function addPendingBackfill(store: TileStore, until: Temporal.Instant) {
-  let from = getThrough(store) ?? until.subtract(BACKFILL_PERIOD);
+  // Never more than BACKFILL_PERIOD back, however long the layer was off.
+  const earliest = until.subtract(BACKFILL_PERIOD);
+  const through = getThrough(store);
+  let from =
+    through && Temporal.Instant.compare(through, earliest) > 0
+      ? through
+      : earliest;
   let to = until;
   const pending = getPendingBackfill(store);
   if (pending) {
-    if (Temporal.Instant.compare(pending.from, from) < 0) from = pending.from;
+    if (Temporal.Instant.compare(pending.from, from) < 0) {
+      from =
+        Temporal.Instant.compare(pending.from, earliest) > 0
+          ? pending.from
+          : earliest;
+    }
     if (Temporal.Instant.compare(pending.to, to) > 0) to = pending.to;
   }
   if (Temporal.Instant.compare(from, to) >= 0) return;
   store.setMeta(PENDING_KEY, `${from}/${to}`);
 }
 
-/** Give up on the pending span, after a failure or when the tiles are cleared. */
+/** Give up on the pending span, once it is done or when the tiles are cleared. */
 export function clearPendingBackfill(store: TileStore) {
   store.setMeta(PENDING_KEY, "");
+  store.setMeta(FAILURES_KEY, "");
+}
+
+/** Meta key for how many starts in a row the pending span has failed. */
+const FAILURES_KEY = "backfill_failures";
+
+/** Starts a pending span may fail before it is given up on. A source that is
+ * slow to come up (an InfluxDB still starting at boot) gets a few chances; one
+ * that fails on the same data every time doesn't cost every start forever. */
+export const MAX_BACKFILL_FAILURES = 3;
+
+/** Record a failed backfill, giving up on the span after
+ * {@link MAX_BACKFILL_FAILURES} in a row. Returns whether it will be retried. */
+export function recordBackfillFailure(store: TileStore): boolean {
+  const failures = Number(store.getMeta(FAILURES_KEY) || 0) + 1;
+  if (failures >= MAX_BACKFILL_FAILURES) {
+    clearPendingBackfill(store);
+    return false;
+  }
+  store.setMeta(FAILURES_KEY, String(failures));
+  return true;
 }
 
 /**
