@@ -31,6 +31,7 @@ import {
   zoomForCellSize,
   BASE_ZOOM,
   MIN_COG_SPEED,
+  cellSize,
   MIN_ZOOM,
   type TileMeta,
   type TransducerOffset,
@@ -124,9 +125,12 @@ async function loadMeta(): Promise<void> {
     });
     if (!res.ok) return;
     const meta = (await res.json()) as TileMeta;
+    // While the plugin restarts it serves no settings; keep the last ones
+    // rather than drawing live soundings uncorrected.
+    if (!meta.depthPath) return;
     transducer = meta.transducer ?? null;
     depthOffset = meta.depthOffset ?? 0;
-    if (meta.depthPath && meta.depthPath !== depthPath) {
+    if (meta.depthPath !== depthPath) {
       depthPath = meta.depthPath;
       if (liveUnsub) {
         stopLive();
@@ -268,7 +272,11 @@ async function refresh(): Promise<void> {
 }
 
 function publish(): void {
-  worker.postMessage({ type: "samples", samples });
+  worker.postMessage({
+    type: "samples",
+    samples,
+    cellMetres: lastZoom ? cellSize(lastZoom) : 0,
+  });
   dirty = true;
   // A live frame for the last request, so the layer updates without a new one.
   if (lastReq) draw(true);

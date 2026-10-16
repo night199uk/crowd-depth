@@ -128,7 +128,7 @@ export function decodeTile(bytes: Uint8Array): TileCells {
 
 /**
  * Build a parent tile's cells from its four child tiles (level z+1, ordered
- * `[southwest, southeast, northwest, northeast]` = `[(0,0),(1,0),(0,1),(1,1)]`
+ * `[northwest, northeast, southwest, southeast]` = `[(0,0),(1,0),(0,1),(1,1)]`
  * in child-tile offsets). A parent cell keeps the **minimum** depth of its four
  * children and the summed count, so zooming out never deepens a shoal.
  */

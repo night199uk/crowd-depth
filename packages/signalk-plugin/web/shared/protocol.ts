@@ -26,7 +26,8 @@ export interface RenderRequest {
 }
 
 export type RenderWorkerIn =
-  | { type: "samples"; samples: DepthSample[] }
+  /** `cellMetres`: the tile cell size the samples were read at. */
+  | { type: "samples"; samples: DepthSample[]; cellMetres: number }
   | { type: "settings"; settings: LayerSettings }
   /** The user's preferred depth unit (`"m"` or `"foot"`), for the labels. */
   | { type: "units"; depth: string }

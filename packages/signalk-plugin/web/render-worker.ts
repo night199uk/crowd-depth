@@ -49,6 +49,8 @@ const WORLD_WIDTH = 2 * ORIGIN_SHIFT;
 
 let samples: DepthSample[] = [];
 let settings: LayerSettings | null = null;
+/** Ground size of a cell in the tiles the samples came from, in metres. */
+let tileCellMetres = 0;
 let field: DepthField | null = null;
 let fieldDirty = true;
 /** The user's preferred depth unit (`"m"` or `"foot"`), for the labels. */
@@ -181,6 +183,9 @@ function releaseGpu(): void {
   depthTexture = null;
   lutTexture = null;
   glCanvas = null;
+  // The field's texture went with the context; upload it again on the next
+  // render, or the empty texture would shade the whole extent as 0 m.
+  fieldDirty = true;
 }
 
 function uploadField(f: DepthField): void {
@@ -234,12 +239,13 @@ function buildField(): void {
     maxY + padY,
   ];
   const extMax = Math.max(extent[2] - extent[0], extent[3] - extent[1]);
-  // Tile samples are already gridded, so the field resolution sets the cell
-  // size and coverage reaches just past a neighboring cell.
-  const cell = Math.max(extMax / MAX_FIELD_CELLS, 0.01);
+  // Tile samples sit at tile cell centres, so a sounding reaches just past the
+  // next tile cell and no further: a track draws as a continuous ribbon, never
+  // wider than the cells it was sounded in.
+  const cell = Math.max(extMax / MAX_FIELD_CELLS, tileCellMetres / 2, 0.01);
   const built = buildDepthField(samples, extent, {
     cellMetres: cell,
-    coverageMetres: cell * 1.5,
+    coverageMetres: Math.max(tileCellMetres, cell) * 1.5,
     coverageMinMetres: 0,
   });
   if (!built) return;
@@ -415,6 +421,7 @@ self.onmessage = (e: MessageEvent<RenderWorkerIn>) => {
   switch (msg.type) {
     case "samples":
       samples = msg.samples;
+      tileCellMetres = msg.cellMetres;
       fieldDirty = true;
       break;
     case "settings":

@@ -155,8 +155,14 @@ test("backfill starts where the tiles left off", async () => {
 });
 
 test("the drawn surface is never deeper than a sounding in range", () => {
+  // Every cell a sounding reaches must be at or above that sounding. A plain
+  // inverse-distance average (shallowBias 0) fails this next to a shoal.
   let seed = 42;
   const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const coverage = 12;
+  const mercX = (lon: number) => (lon * Math.PI * 6378137) / 180;
+  const mercY = (lat: number) =>
+    6378137 * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
   for (let run = 0; run < 20; run++) {
     const samples = Array.from({ length: 40 }, () => ({
       lon: random() * 0.001,
@@ -165,13 +171,22 @@ test("the drawn surface is never deeper than a sounding in range", () => {
     }));
     const field = buildDepthField(samples, [0, 0, 112, 112], {
       cellMetres: 4,
-      coverageMetres: 12,
-    });
-    if (!field) continue;
-    const shallowest = Math.min(...samples.map((s) => s.depth));
-    for (const depth of field.depth) {
-      if (!Number.isNaN(depth)) {
-        expect(depth).toBeGreaterThanOrEqual(shallowest - 1e-6);
+      coverageMetres: coverage,
+    })!;
+    const [minX, minY, maxX] = field.extent;
+    const cell = (maxX - minX) / field.width;
+    for (const sample of samples) {
+      const sx = mercX(sample.lon);
+      const sy = mercY(sample.lat);
+      for (let gy = 0; gy < field.height; gy++) {
+        for (let gx = 0; gx < field.width; gx++) {
+          const dx = minX + (gx + 0.5) * cell - sx;
+          const dy = minY + (gy + 0.5) * cell - sy;
+          if (dx * dx + dy * dy > coverage * coverage) continue;
+          const depth = field.depth[gy * field.width + gx];
+          if (Number.isNaN(depth)) continue;
+          expect(depth).toBeLessThanOrEqual(sample.depth + 1e-4);
+        }
       }
     }
   }
@@ -394,4 +409,106 @@ test("the tile routes need a principal when security is on", () => {
     readonly,
   );
   expect(readonly.code).toBe(200);
+});
+
+test("after a depth reference change, the SQLite log only backfills newer soundings", async () => {
+  // The log stores depths with the offset of their day, so older rows would
+  // come back with the old offset.
+  const db = createDB(":memory:");
+  const source = createSqliteSource(app, db);
+  await pipeline(
+    Readable.from([
+      {
+        latitude: 0,
+        longitude: 0,
+        depth: 3,
+        timestamp: at("2026-10-16T08:00:00Z"),
+        heading: 0,
+      },
+      {
+        latitude: 1,
+        longitude: 1,
+        depth: 4,
+        timestamp: at("2026-10-16T10:30:00Z"),
+        heading: 0,
+      },
+    ]),
+    source.createWriter!(),
+  );
+  const store = createTileStore(db);
+  addPendingBackfill(store, at("2026-10-16T12:00:00Z"));
+  store.setMeta("depth_since", "2026-10-16T10:00:00Z");
+
+  await backfillTiles({
+    app,
+    config,
+    source,
+    store,
+    signal: new AbortController().signal,
+  });
+
+  const before = lngLatToCell(0, 0, BASE_ZOOM);
+  const after = lngLatToCell(1, 1, BASE_ZOOM);
+  expect(store.read(BASE_ZOOM, before.x, before.y)).toBeUndefined();
+  expect(store.read(BASE_ZOOM, after.x, after.y)?.size).toBe(1);
+});
+
+test("a first start backfills the SQLite log even though no depth reference was recorded", () => {
+  const db = createDB(":memory:");
+  const { app: server } = serverApp();
+  const signal = new AbortController();
+  startChart({ app: server, config, db, signal: signal.signal });
+  const store = createTileStore(db);
+  expect(store.getMeta("depth_since") ?? "").toBe("");
+  expect(getPendingBackfill(store)).toBeDefined();
+  signal.abort();
+});
+
+test("the backfill doesn't merge soundings past its span again", async () => {
+  // Sources round windows out to whole hours; the live writer already has the
+  // soundings after the span, so merging them again would double their count.
+  const db = createDB(":memory:");
+  const source = createSqliteSource(app, db);
+  await pipeline(
+    Readable.from([
+      {
+        latitude: 0,
+        longitude: 0,
+        depth: 3,
+        timestamp: at("2026-10-16T11:50:00Z"),
+        heading: 0,
+      },
+    ]),
+    source.createWriter!(),
+  );
+  const store = createTileStore(db);
+  store.setMeta("through", "2026-10-16T11:00:00Z");
+  addPendingBackfill(store, at("2026-10-16T11:30:00Z"));
+
+  await backfillTiles({
+    app,
+    config,
+    source,
+    store,
+    signal: new AbortController().signal,
+  });
+
+  const { x, y } = lngLatToCell(0, 0, BASE_ZOOM);
+  expect(store.read(BASE_ZOOM, x, y)).toBeUndefined();
+});
+
+test("a failing backfill gives up instead of retrying on every start", async () => {
+  const db = createDB(":memory:");
+  const { app: server } = serverApp();
+  const signal = new AbortController();
+  const chart = startChart({ app: server, config, db, signal: signal.signal });
+  const store = createTileStore(db);
+  expect(getPendingBackfill(store)).toBeDefined();
+
+  await chart.backfill({
+    createReader: () => undefined,
+    getAvailableTimeframes: () => Promise.reject(new Error("history down")),
+  });
+  expect(getPendingBackfill(store)).toBeUndefined();
+  signal.abort();
 });

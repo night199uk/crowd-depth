@@ -54,3 +54,40 @@ test("registers the provider on every start and mounts the assets once", async (
   expect(await provider.methods.listResources()).toEqual({});
   await expect(provider.methods.getResource(PLUGIN_ID)).rejects.toThrow();
 });
+
+test("serves the built pages without Express and passes other paths on", async () => {
+  const { registerPlotterExtension } =
+    await import("../../src/plotterext/provider.js");
+  const handlers: ((
+    req: { path: string },
+    res: unknown,
+    next: () => void,
+  ) => void)[] = [];
+  const app = {
+    debug: () => {},
+    registerResourceProvider: () => {},
+    use: (_path: string, handler: (typeof handlers)[number]) =>
+      handlers.push(handler),
+  };
+  registerPlotterExtension(app as never, () => true);
+  const serve = handlers[0];
+
+  const request = (path: string) => {
+    const sent: string[] = [];
+    let passed = false;
+    const res = {
+      type: () => res,
+      sendFile: (file: string) => sent.push(file),
+    };
+    serve({ path }, res, () => (passed = true));
+    return { sent, passed };
+  };
+
+  // The pages exist once `scripts/build-web.mjs` has run, as it does in CI.
+  expect(request("/renderer.html").sent[0]).toMatch(
+    /public[\\/]renderer\.html$/,
+  );
+  expect(request("/js/render-worker.js").sent[0]).toMatch(/render-worker\.js$/);
+  expect(request("/../package.json").passed).toBe(true);
+  expect(request("/bathymetry/meta").passed).toBe(true);
+});

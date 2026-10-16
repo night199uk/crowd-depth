@@ -14,6 +14,11 @@ export const BACKFILL_PERIOD = Temporal.Duration.from({ hours: 30 * 24 });
 /** Meta key for the span still waiting to be backfilled, as `from/to`. */
 const PENDING_KEY = "backfill";
 
+/** Meta key for when the depth reference last changed. The plugin's SQLite log
+ * stores depths with the offset of their day, so it can't rebuild depths from
+ * before this; the History API applies the current offset as it reads. */
+export const DEPTH_SINCE_KEY = "depth_since";
+
 /** Size of each read from the source. */
 const WINDOW = Temporal.Duration.from({ hours: 1 });
 
@@ -42,6 +47,11 @@ export function addPendingBackfill(store: TileStore, until: Temporal.Instant) {
   store.setMeta(PENDING_KEY, `${from}/${to}`);
 }
 
+/** Give up on the pending span, after a failure or when the tiles are cleared. */
+export function clearPendingBackfill(store: TileStore) {
+  store.setMeta(PENDING_KEY, "");
+}
+
 /**
  * Fill the tiles for the pending span from the plugin's own source (the
  * History API or its SQLite log). Soundings go through the same position
@@ -61,10 +71,27 @@ export async function backfillTiles({
   store: TileStore;
   signal: AbortSignal;
 }): Promise<void> {
-  const pending = getPendingBackfill(store);
+  let pending = getPendingBackfill(store);
   if (!pending) return;
+  // The SQLite log is the source that can write; its depths from before a
+  // depth reference change were recorded with the old offset.
+  const depthSince = store.getMeta(DEPTH_SINCE_KEY);
+  if (source.createWriter && depthSince) {
+    const since = Temporal.Instant.from(depthSince);
+    if (Temporal.Instant.compare(since, pending.to) >= 0) {
+      clearPendingBackfill(store);
+      return;
+    }
+    if (Temporal.Instant.compare(since, pending.from) > 0) {
+      pending = new Timeframe(since, pending.to);
+    }
+  }
 
-  const windows = await source.getAvailableTimeframes(pending, WINDOW);
+  // Sources round windows out to whole hours; soundings past the span were
+  // already written live.
+  const windows = (await source.getAvailableTimeframes(pending, WINDOW)).map(
+    (window) => window.clamp(pending),
+  );
   if (windows.length > 0) {
     app.debug(`Backfilling chart tiles from ${windows.length} windows`);
     await pipeline(
@@ -80,5 +107,5 @@ export async function backfillTiles({
       { signal },
     );
   }
-  if (!signal.aborted) store.setMeta(PENDING_KEY, "");
+  if (!signal.aborted) clearPendingBackfill(store);
 }

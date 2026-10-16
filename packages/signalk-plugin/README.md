@@ -34,7 +34,7 @@ and make navigation safer for everyone.
    navigation apps under a [CC0 public
    domain](https://creativecommons.org/publicdomain/zero/1.0/) dedication.
    Open Waters also builds openly licensed depth products from them.
-4. **See** — On a chartplotter that supports Signal K plotter extensions, such as Freeboard-SK 3.4 or later, the depths you record appear as a "My soundings" layer: a shaded surface with depth contours and shoal labels that fills in under the bow as you go. The shallowest sounding in each spot always wins, so zooming out never hides a shoal.
+4. **See** — On a chartplotter that supports Signal K plotter extensions, such as Freeboard-SK 3.4 or later, the depths you record appear as a "My soundings" layer: a shaded surface with depth contours and shoal labels that fills in under the bow as you go. The shallowest sounding in each spot always wins, so zooming out doesn't hide a shoal, until the view is too wide for the layer to draw at all.
 
 You stay in control: sharing can be anonymous (a random UUID instead of your
 vessel name and MMSI), and you can disable the plugin at any time.
@@ -92,7 +92,7 @@ Universal](https://creativecommons.org/publicdomain/zero/1.0/).
 
 ### Chart
 
-- **Show my soundings on the chart** — Offer the "My soundings" layer to chartplotters that support Signal K plotter extensions (on by default). The layer appears in the chartplotter's chart list with its own settings for shading, contour interval and safety depth. It draws the same corrected soundings the plugin shares, from the last 30 days when it first starts, then live. Changing the depth path or sensor offsets rebuilds it from your recorded soundings. With Signal K security on, the layer needs a login or read-only access, like your position does.
+- **Show my soundings on the chart** — Offer the "My soundings" layer to chartplotters that support Signal K plotter extensions (on by default). The layer appears in the chartplotter's chart list with its own settings for shading, contour interval and safety depth. It draws the same corrected soundings the plugin shares, from the last 30 days when it first starts, then live. Changing the sensor offsets rebuilds the last 30 days from your recorded soundings. Changing the depth path or transducer depth rebuilds it from a History API provider if you have one, and otherwise starts the layer afresh, since the plugin's own log stores depths with the old offset. With Signal K security on, the layer needs a login or read-only access, like your position does.
 
 The layer shows raw soundings from your own sounder, not corrected for tide or checked against surveys. It is not for navigation. Its rendering is adapted from [signalk-livedepth-plugin](https://github.com/night199uk/signalk-livedepth-plugin) by Nick Roberts, under the MIT License; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
