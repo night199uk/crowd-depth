@@ -1,11 +1,14 @@
 import { Writable } from "stream";
+import { setImmediate } from "node:timers/promises";
 import { Temporal } from "@js-temporal/polyfill";
 import { BathymetryData } from "../types.js";
 import {
   BASE_ZOOM,
   TileStore,
   createTileAccumulator,
+  MIN_ZOOM,
   lngLatToCell,
+  minPoolTile,
   rebuildAncestorsOf,
 } from "./core/index.js";
 
@@ -18,6 +21,51 @@ export const DEFAULT_FLUSH_MS = 10_000;
  * Rebuilding them on every flush rewrote a harbour's worth of coarse tiles each
  * second, which wears out an SD card. */
 export const DEFAULT_ANCESTORS_MS = 5 * 60_000;
+
+/** Soundings a backfill folds in before writing them, which bounds its memory
+ * whether or not its flush timer gets a turn. */
+const BULK_FLUSH_SOUNDINGS = 10_000;
+
+/** Parent tiles rebuilt per transaction at the end of a backfill, between
+ * turns of the event loop. */
+const REBUILD_CHUNK = 256;
+
+/** Rebuild the ancestors of `tiles` level by level, in chunks, yielding to the
+ * event loop between them, so a backfill over weeks of soundings doesn't stall
+ * the server while it re-pools the pyramid. */
+async function rebuildAncestorsInChunks(
+  store: TileStore,
+  tiles: Iterable<{ x: number; y: number }>,
+  baseZoom: number,
+) {
+  let level = [...tiles];
+  for (let z = baseZoom; z > MIN_ZOOM && level.length > 0; z--) {
+    const parents = new Map<string, { x: number; y: number }>();
+    for (const { x, y } of level) {
+      parents.set(`${x >> 1},${y >> 1}`, { x: x >> 1, y: y >> 1 });
+    }
+    const list = [...parents.values()];
+    for (let i = 0; i < list.length; i += REBUILD_CHUNK) {
+      store.transaction(() => {
+        for (const { x, y } of list.slice(i, i + REBUILD_CHUNK)) {
+          store.write(
+            z - 1,
+            x,
+            y,
+            minPoolTile([
+              store.read(z, x * 2, y * 2),
+              store.read(z, x * 2 + 1, y * 2),
+              store.read(z, x * 2, y * 2 + 1),
+              store.read(z, x * 2 + 1, y * 2 + 1),
+            ]),
+          );
+        }
+      });
+      await setImmediate();
+    }
+    level = list;
+  }
+}
 
 /** Meta key for the time the live writer has recorded soundings through. */
 export const THROUGH_KEY = "through";
@@ -74,6 +122,7 @@ export function createTileWriter(
   const touched = new Map<string, { x: number; y: number }>();
   let latest: Temporal.Instant | undefined;
   let lastAncestors = Date.now();
+  let unflushed = 0;
 
   const rebuild = () => {
     rebuildAncestorsOf(store, touched.values(), { baseZoom });
@@ -98,6 +147,10 @@ export function createTileWriter(
         });
         const { x, y } = lngLatToCell(data.longitude, data.latitude, baseZoom);
         touched.set(`${x},${y}`, { x, y });
+        if (bulk && ++unflushed >= BULK_FLUSH_SOUNDINGS) {
+          unflushed = 0;
+          accumulator.flush();
+        }
         if (
           data.timestamp &&
           (!latest || Temporal.Instant.compare(data.timestamp, latest) > 0)
@@ -113,11 +166,19 @@ export function createTileWriter(
       clearInterval(timer);
       try {
         flush();
-        rebuild();
-        callback();
+        if (!bulk) {
+          rebuild();
+          callback();
+          return;
+        }
       } catch (err) {
         callback(err as Error);
+        return;
       }
+      rebuildAncestorsInChunks(store, touched.values(), baseZoom).then(() => {
+        touched.clear();
+        callback();
+      }, callback);
     },
     // A pipeline destroys its writer on abort, which does not run `final`, so
     // write what is held here too, or a plugin stop would leave the coarser

@@ -70,10 +70,13 @@ export function lngLatToCell(lon: number, lat: number, z: number) {
   return { x, y, cx, cy };
 }
 
-/** Quantise a depth in metres to the store's centimetre resolution. */
+/** Quantise a depth in metres to the store's centimetre resolution, rounding
+ * toward shoal so a stored depth is never deeper than the sounding. The small
+ * allowance keeps float error (12.34 * 100 = 1233.999…) from dropping a
+ * centimetre. */
 export function encodeDepth(metres: number): number {
   if (!Number.isFinite(metres)) return NODATA;
-  return clamp(Math.round(metres * 100), 0, NODATA - 1);
+  return clamp(Math.floor(metres * 100 + 1e-6), 0, NODATA - 1);
 }
 
 /** Decode a stored depth in centimetres back to metres. */

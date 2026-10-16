@@ -1,4 +1,5 @@
 import { pipeline } from "stream/promises";
+import { setImmediate } from "node:timers/promises";
 import { Temporal } from "@js-temporal/polyfill";
 import { transform } from "stream-transform";
 import { ServerAPI } from "@signalk/server-api";
@@ -18,6 +19,11 @@ const PENDING_KEY = "backfill";
  * stores depths with the offset of their day, so it can't rebuild depths from
  * before this; the History API applies the current offset as it reads. */
 export const DEPTH_SINCE_KEY = "depth_since";
+
+/** Soundings read between turns of the event loop. The SQLite source reads
+ * synchronously, so without a pause a long backfill would hold up the whole
+ * Signal K server. */
+const YIELD_EVERY = 1000;
 
 /** Size of each read from the source. */
 const WINDOW = Temporal.Duration.from({ hours: 1 });
@@ -129,10 +135,15 @@ export async function backfillTiles({
     app.debug(`Backfilling chart tiles from ${windows.length} windows`);
     await pipeline(
       async function* () {
+        let read = 0;
         for (const window of windows) {
           if (signal.aborted) return;
           const reader = await source.createReader(window);
-          if (reader) yield* reader;
+          if (!reader) continue;
+          for await (const sounding of reader) {
+            yield sounding;
+            if (++read % YIELD_EVERY === 0) await setImmediate();
+          }
         }
       },
       transform(correctForSensorPosition(config)),

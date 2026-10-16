@@ -72,6 +72,9 @@ let transducer: TransducerOffset | null = null;
 let depthPath = DEFAULT_DEPTH_PATH;
 /** Added to each live depth, as the plugin adds it to what it records. */
 let depthOffset = 0;
+/** Whether the plugin's corrections are known. Until they are, live soundings
+ * are left out rather than drawn uncorrected. */
+let metaLoaded = false;
 
 let samples: DepthSample[] = [];
 /** The server-derived soundings, without the client's live
@@ -147,6 +150,7 @@ async function loadMeta(): Promise<void> {
     }
     transducer = nextTransducer;
     depthOffset = nextOffset;
+    metaLoaded = true;
     if (meta.depthPath !== depthPath) {
       depthPath = meta.depthPath;
       if (liveUnsub) {
@@ -381,6 +385,7 @@ function fresh<T>(timed: Timed<T> | undefined): T | undefined {
 }
 
 function sampleLive(depth: number): void {
+  if (!metaLoaded) return;
   const at = fresh(livePosition);
   if (!at) return;
   const position = correct(at[0], at[1]);

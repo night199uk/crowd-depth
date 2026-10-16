@@ -117,7 +117,7 @@ export function createTileStore(db: DatabaseSync): TileStore {
     clear: () => {
       db.exec("DELETE FROM tiles");
     },
-    // The database belongs to the plugin, which closes it.
+    // The database belongs to the plugin, which outlives this store.
     close: () => {},
   };
 }

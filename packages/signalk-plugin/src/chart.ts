@@ -71,30 +71,7 @@ export function startChart({
   const startedAt = Temporal.Now.instant();
   const meta = chartMeta(config);
 
-  // Tiles hold soundings corrected with the offsets of their day, on the grid
-  // of their build. When either changes, the old ones would sit beside the
-  // new, so the tiles are rebuilt.
-  const position = JSON.stringify({
-    transducer: meta.transducer,
-    baseZoom: BASE_ZOOM,
-    minZoom: MIN_ZOOM,
-    format: BATHYMETRY_FORMAT,
-  });
-  const depth = JSON.stringify({
-    depthPath: meta.depthPath,
-    depthOffset: meta.depthOffset,
-  });
-  // A first start has nothing recorded under another depth reference.
-  const previousDepth = store.getMeta(DEPTH_CONFIG_KEY);
-  const depthChanged = previousDepth !== undefined && previousDepth !== depth;
-  if (store.getMeta(POSITION_CONFIG_KEY) !== position || depthChanged) {
-    store.clear();
-    store.setMeta(THROUGH_KEY, "");
-    clearPendingBackfill(store);
-    if (depthChanged) store.setMeta(DEPTH_SINCE_KEY, startedAt.toString());
-    store.setMeta(POSITION_CONFIG_KEY, position);
-    store.setMeta(DEPTH_CONFIG_KEY, depth);
-  }
+  syncConfig(store, meta, startedAt);
   // Before the live writer starts, so its marker doesn't hide the gap.
   addPendingBackfill(store, startedAt);
 
@@ -150,13 +127,54 @@ export function startChart({
 }
 
 /**
+ * Tiles hold soundings corrected with the offsets of their day, on the grid of
+ * their build. When either changes, the old ones would sit beside the new, so
+ * the tiles are cleared for a rebuild. Run on every start, including while the
+ * layer is off, so a depth reference change is dated when it happens.
+ */
+function syncConfig(
+  store: TileStore,
+  meta: BathymetryMeta,
+  startedAt: Temporal.Instant,
+) {
+  const position = JSON.stringify({
+    transducer: meta.transducer,
+    baseZoom: BASE_ZOOM,
+    minZoom: MIN_ZOOM,
+    format: BATHYMETRY_FORMAT,
+  });
+  const depth = JSON.stringify({
+    depthPath: meta.depthPath,
+    depthOffset: meta.depthOffset,
+  });
+  // A first start has nothing recorded under another depth reference.
+  const previousDepth = store.getMeta(DEPTH_CONFIG_KEY);
+  const depthChanged = previousDepth !== undefined && previousDepth !== depth;
+  if (store.getMeta(POSITION_CONFIG_KEY) !== position || depthChanged) {
+    store.clear();
+    store.setMeta(THROUGH_KEY, "");
+    clearPendingBackfill(store);
+    if (depthChanged) store.setMeta(DEPTH_SINCE_KEY, startedAt.toString());
+    store.setMeta(POSITION_CONFIG_KEY, position);
+    store.setMeta(DEPTH_CONFIG_KEY, depth);
+  }
+}
+
+/**
  * Start the chart layer unless it is turned off, without letting it stop the
  * plugin: a failure here (a locked database, a refused provider) is logged and
  * the plugin goes on collecting and sharing without the layer.
  */
 export function startChartSafely(options: Parameters<typeof startChart>[0]) {
-  if (options.config.chart?.show === false) return undefined;
   try {
+    if (options.config.chart?.show === false) {
+      syncConfig(
+        createTileStore(options.db),
+        chartMeta(options.config),
+        Temporal.Now.instant(),
+      );
+      return undefined;
+    }
     return startChart(options);
   } catch (err) {
     options.app.error(`Chart layer failed to start: ${err}`);

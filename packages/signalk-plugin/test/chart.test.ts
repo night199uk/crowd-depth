@@ -17,6 +17,7 @@ import {
   addPendingBackfill,
   backfillTiles,
   createTileWriter,
+  encodeDepth,
   getPendingBackfill,
   registerBathymetryRoutes,
   correctToTransducer,
@@ -639,4 +640,96 @@ test("an older start ending late doesn't take down the newer one", async () => {
   ]);
   newer.abort();
   expect(await provider.methods.listResources()).toEqual({});
+});
+
+test("stored depths round toward shoal", () => {
+  for (const depth of [2.345, 12.34, 0.999, 7.5]) {
+    const stored = decodeDepth(encodeDepth(depth));
+    expect(stored).toBeLessThanOrEqual(depth);
+    expect(depth - stored).toBeLessThan(0.01);
+  }
+});
+
+test("a long SQLite backfill lets the server's event loop run", async () => {
+  // The SQLite source reads synchronously; without pauses a backfill of weeks
+  // of soundings held up the whole Signal K server.
+  const db = createDB(":memory:");
+  const source = createSqliteSource(app, db);
+  const start = at("2026-10-16T00:00:00Z").epochMilliseconds;
+  await pipeline(
+    Readable.from(
+      Array.from({ length: 20_000 }, (_, i) => ({
+        latitude: (i % 200) * 0.0001,
+        longitude: Math.floor(i / 200) * 0.0001,
+        depth: 5,
+        timestamp: Temporal.Instant.fromEpochMilliseconds(start + i * 1000),
+        heading: 0,
+      })),
+    ),
+    source.createWriter!(),
+  );
+  const store = createTileStore(db);
+  addPendingBackfill(store, at("2026-10-17T00:00:00Z"));
+
+  // Count turns of the event loop between the first and last sounding read,
+  // which is before the writer's own pauses at the end.
+  let turns = 0;
+  const probe = setInterval(() => turns++, 0);
+  let firstRead: number | undefined;
+  let lastRead = 0;
+  const watched = {
+    ...source,
+    createReader: async (window: Parameters<typeof source.createReader>[0]) => {
+      const reader = await source.createReader(window);
+      if (!reader) return reader;
+      return Readable.from(
+        (async function* () {
+          for await (const sounding of reader) {
+            firstRead ??= turns;
+            lastRead = turns;
+            yield sounding;
+          }
+        })(),
+      );
+    },
+  };
+  try {
+    await backfillTiles({
+      app,
+      config,
+      source: watched,
+      store,
+      signal: new AbortController().signal,
+    });
+  } finally {
+    clearInterval(probe);
+  }
+  expect(lastRead - firstRead!).toBeGreaterThan(1);
+  expect(getPendingBackfill(store)).toBeUndefined();
+});
+
+test("a depth change made while the layer is off is dated when it happens", () => {
+  const db = createDB(":memory:");
+  const { app: server } = serverApp();
+  const first = new AbortController();
+  startChart({ app: server, config, db, signal: first.signal });
+  first.abort();
+
+  // Off, with a new transducer depth.
+  const off = { ...offsetConfig, chart: { show: false } };
+  startChartSafely({
+    app: server,
+    config: off,
+    db,
+    signal: new AbortController().signal,
+  });
+  const store = createTileStore(db);
+  const since = store.getMeta("depth_since");
+  expect(since).toBeTruthy();
+
+  // Turned back on later: no new change, so the date stays.
+  const on = new AbortController();
+  startChart({ app: server, config: offsetConfig, db, signal: on.signal });
+  expect(store.getMeta("depth_since")).toBe(since);
+  on.abort();
 });
