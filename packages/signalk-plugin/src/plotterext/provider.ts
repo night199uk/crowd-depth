@@ -68,35 +68,38 @@ interface AssetResponse {
   sendFile(path: string): void;
 }
 
-/** Serve the extension's pages as a top-level route. The files are read by
- * path from the package's `public/` folder, without Express's static
- * middleware: the plugin can't count on resolving `express` itself, since the
- * server, which owns it, is often installed elsewhere. Anything that isn't one
- * of those files falls through to the routes after it. */
+/** The built pages, `scripts/build-web.mjs` writes them here. */
+const PUBLIC_DIR = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "public",
+);
+
+/** Serve files from `root` by path, without Express's static middleware: the
+ * plugin can't count on resolving `express` itself, since the server, which
+ * owns it, is often installed elsewhere. Anything that isn't one of the built
+ * pages falls through to the routes after it. */
+export function createAssetHandler(root: string) {
+  return (req: { path: string }, res: AssetResponse, next: Next) => {
+    const file = resolve(
+      root,
+      `.${req.path === "/" ? "/index.html" : req.path}`,
+    );
+    const type = CONTENT_TYPES[extname(file)];
+    if (!type || !file.startsWith(root + sep) || !existsSync(file)) {
+      return next();
+    }
+    res.type(type).sendFile(file);
+  };
+}
+
+/** Serve the extension's pages as a top-level route, once. */
 function mountAssets(app: ExtensionApp): void {
   if (mounted || typeof app.use !== "function") {
     return;
   }
-  const root = resolve(
-    dirname(fileURLToPath(import.meta.url)),
-    "..",
-    "..",
-    "public",
-  );
-  app.use(
-    ASSET_BASE,
-    (req: { path: string }, res: AssetResponse, next: Next) => {
-      const file = resolve(
-        root,
-        `.${req.path === "/" ? "/index.html" : req.path}`,
-      );
-      const type = CONTENT_TYPES[extname(file)];
-      if (!type || !file.startsWith(root + sep) || !existsSync(file)) {
-        return next();
-      }
-      res.type(type).sendFile(file);
-    },
-  );
+  app.use(ASSET_BASE, createAssetHandler(PUBLIC_DIR));
   mounted = true;
   app.debug(`${PLUGIN_ID}: extension assets served at ${ASSET_BASE}`);
 }

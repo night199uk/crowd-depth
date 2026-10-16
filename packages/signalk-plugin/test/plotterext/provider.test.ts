@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, expect, test, vi } from "vitest";
 import type { ServerAPI } from "@signalk/server-api";
 
@@ -56,38 +59,36 @@ test("registers the provider on every start and mounts the assets once", async (
 });
 
 test("serves the built pages without Express and passes other paths on", async () => {
-  const { registerPlotterExtension } =
+  const { createAssetHandler } =
     await import("../../src/plotterext/provider.js");
-  const handlers: ((
-    req: { path: string },
-    res: unknown,
-    next: () => void,
-  ) => void)[] = [];
-  const app = {
-    debug: () => {},
-    registerResourceProvider: () => {},
-    use: (_path: string, handler: (typeof handlers)[number]) =>
-      handlers.push(handler),
-  };
-  registerPlotterExtension(app as never, () => true);
-  const serve = handlers[0];
+  const root = mkdtempSync(join(tmpdir(), "crowd-depth-public-"));
+  try {
+    mkdirSync(join(root, "js"));
+    writeFileSync(join(root, "renderer.html"), "<!doctype html>");
+    writeFileSync(join(root, "js", "render-worker.js"), "");
+    const serve = createAssetHandler(root);
 
-  const request = (path: string) => {
-    const sent: string[] = [];
-    let passed = false;
-    const res = {
-      type: () => res,
-      sendFile: (file: string) => sent.push(file),
+    const request = (path: string) => {
+      const sent: string[] = [];
+      let passed = false;
+      const res = {
+        type: () => res,
+        sendFile: (file: string) => sent.push(file),
+      };
+      serve({ path }, res, () => (passed = true));
+      return { sent, passed };
     };
-    serve({ path }, res, () => (passed = true));
-    return { sent, passed };
-  };
 
-  // The pages exist once `scripts/build-web.mjs` has run, as it does in CI.
-  expect(request("/renderer.html").sent[0]).toMatch(
-    /public[\\/]renderer\.html$/,
-  );
-  expect(request("/js/render-worker.js").sent[0]).toMatch(/render-worker\.js$/);
-  expect(request("/../package.json").passed).toBe(true);
-  expect(request("/bathymetry/meta").passed).toBe(true);
+    expect(request("/renderer.html").sent).toEqual([
+      join(root, "renderer.html"),
+    ]);
+    expect(request("/js/render-worker.js").sent).toEqual([
+      join(root, "js", "render-worker.js"),
+    ]);
+    expect(request("/../package.json").passed).toBe(true);
+    expect(request("/bathymetry/meta").passed).toBe(true);
+    expect(request("/missing.html").passed).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
