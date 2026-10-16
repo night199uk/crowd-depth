@@ -133,8 +133,20 @@ async function loadMeta(): Promise<void> {
     // While the plugin restarts it serves no settings; keep the last ones
     // rather than drawing live soundings uncorrected.
     if (!meta.depthPath) return;
-    transducer = meta.transducer ?? null;
-    depthOffset = meta.depthOffset ?? 0;
+    const nextTransducer = meta.transducer ?? null;
+    const nextOffset = meta.depthOffset ?? 0;
+    if (
+      JSON.stringify(nextTransducer) !== JSON.stringify(transducer) ||
+      nextOffset !== depthOffset ||
+      meta.depthPath !== depthPath
+    ) {
+      // The plugin rebuilt its tiles with the new correction; the client's
+      // soundings were placed with the old one.
+      liveSoundings = [];
+      resetClientStore();
+    }
+    transducer = nextTransducer;
+    depthOffset = nextOffset;
     if (meta.depthPath !== depthPath) {
       depthPath = meta.depthPath;
       if (liveUnsub) {
@@ -266,8 +278,21 @@ function clientSamples(): DepthSample[] {
 /** The drawn soundings: the server data plus the live extension, composed
  * locally so a flush never needs a network round trip. */
 function compose(): void {
-  samples = [...baseSamples, ...clientSamples()];
+  samples = aroundView([...baseSamples, ...clientSamples()]);
   publish();
+}
+
+/** Wrap longitudes to within half a world of the view's centre, so a view
+ * across the antimeridian gets one compact field rather than one spanning the
+ * globe from -180° to +180°. */
+function aroundView(list: DepthSample[]): DepthSample[] {
+  const bounds = lastReq?.bounds;
+  if (!bounds) return list;
+  const centre = (bounds[0] + bounds[2]) / 2;
+  return list.map((s) => {
+    const lon = s.lon - Math.round((s.lon - centre) / 360) * 360;
+    return lon === s.lon ? s : { ...s, lon };
+  });
 }
 
 function schedule(): void {

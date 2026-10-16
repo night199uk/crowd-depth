@@ -98,10 +98,14 @@ export function startChart({
   // Before the live writer starts, so its marker doesn't hide the gap.
   addPendingBackfill(store, startedAt);
 
-  current = { store, meta };
-  signal.addEventListener("abort", () => {
-    current = undefined;
-  });
+  const started = { store, meta };
+  current = started;
+  // Only this start's own state: an older start can end after a newer one
+  // replaced it.
+  const stop = () => {
+    if (current === started) current = undefined;
+  };
+  signal.addEventListener("abort", stop);
 
   pipeline(
     createLiveStream(app, config),
@@ -112,7 +116,7 @@ export function startChart({
     if (signal.aborted) return;
     app.error(`Chart tiles stopped: ${err}`);
     // Stop offering a layer that no longer updates.
-    current = undefined;
+    stop();
   });
 
   registerPlotterExtension(app, () => current !== undefined);

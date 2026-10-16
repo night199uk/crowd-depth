@@ -620,3 +620,23 @@ test("a chart that fails to start doesn't stop the plugin", () => {
     }),
   ).toBeUndefined();
 });
+
+test("an older start ending late doesn't take down the newer one", async () => {
+  const db = createDB(":memory:");
+  const { app: server, registerResourceProvider } = serverApp();
+  const older = new AbortController();
+  startChart({ app: server, config, db, signal: older.signal });
+  const newer = new AbortController();
+  startChart({ app: server, config, db, signal: newer.signal });
+  older.abort();
+
+  // The layer is offered while the newer start runs, and only then.
+  const provider = registerResourceProvider.mock.calls.at(-1)![0] as {
+    methods: { listResources: () => Promise<Record<string, unknown>> };
+  };
+  expect(Object.keys(await provider.methods.listResources())).toEqual([
+    "crowd-depth",
+  ]);
+  newer.abort();
+  expect(await provider.methods.listResources()).toEqual({});
+});
