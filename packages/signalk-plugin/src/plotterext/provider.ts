@@ -68,13 +68,13 @@ interface AssetResponse {
   sendFile(path: string): void;
 }
 
-/** The built pages, `scripts/build-web.mjs` writes them here. */
-const PUBLIC_DIR = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "..",
-  "public",
-);
+/** Where `scripts/build-web.mjs` writes the built pages. Worked out when the
+ * pages are mounted, not when the module loads: the API's Worker bundles this
+ * package, and `import.meta.url` isn't a file URL there, so resolving it at
+ * load time crashes the Worker on startup. */
+function publicDir(): string {
+  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "public");
+}
 
 /** Serve files from `root` by path, without Express's static middleware: the
  * plugin can't count on resolving `express` itself, since the server, which
@@ -99,7 +99,7 @@ function mountAssets(app: ExtensionApp): void {
   if (mounted || typeof app.use !== "function") {
     return;
   }
-  app.use(ASSET_BASE, createAssetHandler(PUBLIC_DIR));
+  app.use(ASSET_BASE, createAssetHandler(publicDir()));
   mounted = true;
   app.debug(`${PLUGIN_ID}: extension assets served at ${ASSET_BASE}`);
 }
