@@ -34,6 +34,7 @@ and make navigation safer for everyone.
    navigation apps under a [CC0 public
    domain](https://creativecommons.org/publicdomain/zero/1.0/) dedication.
    Open Waters also builds openly licensed depth products from them.
+4. **See** — On a chartplotter that supports Signal K plotter extensions, such as Freeboard-SK 3.4 or later, the depths you record appear as a "My soundings" layer: a shaded surface with depth contours and shoal labels that fills in under the bow as you go. The shallowest sounding in each spot always wins, so zooming out never hides a shoal.
 
 You stay in control: sharing can be anonymous (a random UUID instead of your
 vessel name and MMSI), and you can disable the plugin at any time.
@@ -88,6 +89,12 @@ take a few minutes to measure them. Where your vessel already reports
 By enabling the plugin, you agree to share your soundings and your vessel and
 sensor details, and you dedicate them to the public domain under [CC0 1.0
 Universal](https://creativecommons.org/publicdomain/zero/1.0/).
+
+### Chart
+
+- **Show my soundings on the chart** — Offer the "My soundings" layer to chartplotters that support Signal K plotter extensions (on by default). The layer appears in the chartplotter's chart list with its own settings for shading, contour interval and safety depth. It draws the same corrected soundings the plugin shares, from the last 30 days when it first starts, then live. Changing the depth path or sensor offsets rebuilds it from your recorded soundings. With Signal K security on, the layer needs a login or read-only access, like your position does.
+
+The layer shows raw soundings from your own sounder, not corrected for tide or checked against surveys. It is not for navigation. Its rendering is adapted from [signalk-livedepth-plugin](https://github.com/night199uk/signalk-livedepth-plugin) by Nick Roberts, under the MIT License; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## For developers
 
