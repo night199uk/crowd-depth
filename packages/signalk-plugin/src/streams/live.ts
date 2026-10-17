@@ -8,6 +8,10 @@ import { bowBearing } from "./transforms.js";
 /** Maximum age of last position fix for a depth to be saved */
 const ttl = 2000;
 
+/** The tide prediction a sounding is recorded against, when the server has one.
+ * Read at the sounding's time; absent when no tides provider is configured. */
+const TIDE = "environment.tide.heightNow";
+
 export function createLiveStream(app: ServerAPI, config: Config) {
   const path = `environment.depth.${config.path}` as Path;
   const { offset } = depthReference(config);
@@ -69,6 +73,7 @@ export function createLiveStream(app: ServerAPI, config: Config) {
               depth,
               timestamp,
               heading,
+              tide: freshValue(TIDE, timestamp),
             };
 
             app.debug(

@@ -21,6 +21,7 @@ import { bowBearing } from "../streams/transforms.js";
 const HEADING = "navigation.headingTrue";
 const COG = "navigation.courseOverGroundTrue";
 const SOG = "navigation.speedOverGround";
+const TIDE = "environment.tide.heightNow";
 
 export async function createHistorySource(
   app: ServerAPI,
@@ -79,6 +80,14 @@ export async function createHistorySource(
           aggregate: "min" as const,
           parameter: [],
         })),
+        // The tide the sounding is recorded against, so the depth can later be
+        // reduced to a chart datum. Absent on a server with no tides provider,
+        // and dropped from the query below when the provider has not recorded it.
+        {
+          path: TIDE as Path,
+          aggregate: "first" as const,
+          parameter: [],
+        },
       ],
     };
 
@@ -137,6 +146,7 @@ export async function createHistorySource(
               courseOverGround: column(row, COG),
               speedOverGround: column(row, SOG),
             }),
+            tide: column(row, TIDE),
           };
         }
       })

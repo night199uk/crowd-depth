@@ -30,6 +30,12 @@ export type BathymetryData = {
   depth: number;
   timestamp: Temporal.Instant;
   heading?: number;
+  /**
+   * Water level above chart datum at the sample, in metres, when the server has
+   * a tide prediction. Recorded so the depth can be reduced to a chart datum
+   * later; the stored depth itself stays below surface.
+   */
+  tide?: number;
 };
 
 export interface BathymetrySource {

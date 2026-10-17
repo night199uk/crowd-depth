@@ -44,12 +44,13 @@ test("pairs position, depth and heading, dropping rows without a position or dep
       { path: "navigation.position", method: "first" },
       { path: "environment.depth.depthFromTransducer", method: "min" },
       { path: "navigation.headingTrue", method: "average" },
+      { path: "environment.tide.heightNow", method: "first" },
     ],
     data: [
-      ["2025-01-01T12:00:00.000Z", [1, 2], 3.2, 90],
-      ["2025-01-01T12:00:01.000Z", [null, null], 6.7, 45], // no position → skip
-      ["2025-01-01T12:00:02.000Z", [3, 4], null, 45], // no depth → skip
-      ["2025-01-01T12:00:03.000Z", [5, 6], 9.9, null], // no heading → kept, heading undefined
+      ["2025-01-01T12:00:00.000Z", [1, 2], 3.2, 90, 0.5],
+      ["2025-01-01T12:00:01.000Z", [null, null], 6.7, 45, 0.6], // no position → skip
+      ["2025-01-01T12:00:02.000Z", [3, 4], null, 45, 0.7], // no depth → skip
+      ["2025-01-01T12:00:03.000Z", [5, 6], 9.9, null, 0.8], // no heading → kept, heading undefined
     ],
   });
 
@@ -64,6 +65,7 @@ test("pairs position, depth and heading, dropping rows without a position or dep
       latitude: 2,
       depth: 3.2,
       heading: 90,
+      tide: 0.5,
     },
     {
       timestamp: Temporal.Instant.from("2025-01-01T12:00:03.000Z"),
@@ -71,6 +73,7 @@ test("pairs position, depth and heading, dropping rows without a position or dep
       latitude: 6,
       depth: 9.9,
       heading: undefined,
+      tide: 0.8,
     },
   ]);
 });

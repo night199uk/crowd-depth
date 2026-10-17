@@ -33,6 +33,13 @@ export function createDB(filename: string): DatabaseSync {
       `);
     },
     () => {
+      // The water level above chart datum at the sounding, when the server has
+      // a tide prediction. Null when unknown, so the depth can still be reduced
+      // to a chart datum where the tide is known and left below-surface where it
+      // is not.
+      db.exec(`ALTER TABLE bathymetry ADD COLUMN tide REAL`);
+    },
+    () => {
       // The chart layer's tile pyramid, derived from the soundings above; see
       // tiles/store.ts.
       db.exec(`

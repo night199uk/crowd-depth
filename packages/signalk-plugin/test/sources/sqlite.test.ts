@@ -14,6 +14,8 @@ const data = [
     depth: 3,
     timestamp: Temporal.Instant.from("2025-08-06T22:00:00.000Z"),
     heading: 0,
+    // with a tide (water level above chart datum)
+    tide: 0.5,
   },
   // without heading
   {
