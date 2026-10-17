@@ -13,6 +13,7 @@ type BathymetryRow = {
   timestamp: number;
   heading: number | null;
   tide: number | null;
+  tide_station: string | null;
 };
 
 export function createSqliteSource(
@@ -112,7 +113,15 @@ export function createSqliteReader(
       }) as BathymetryRow[];
 
       rows.forEach(
-        ({ longitude, latitude, depth, timestamp, heading, tide }) => {
+        ({
+          longitude,
+          latitude,
+          depth,
+          timestamp,
+          heading,
+          tide,
+          tide_station,
+        }) => {
           this.push({
             longitude,
             latitude,
@@ -120,6 +129,7 @@ export function createSqliteReader(
             timestamp: Temporal.Instant.fromEpochMilliseconds(timestamp),
             heading,
             tide: tide ?? undefined,
+            tideStation: tide_station ?? undefined,
           } as BathymetryData);
         },
       );
@@ -139,8 +149,8 @@ export function createSqliteWriter(db: DatabaseSync) {
     construct(callback) {
       try {
         stmt = db.prepare(`
-          INSERT INTO bathymetry(longitude, latitude, depth, timestamp, heading, tide)
-          VALUES(:longitude, :latitude, :depth, :timestamp, :heading, :tide)
+          INSERT INTO bathymetry(longitude, latitude, depth, timestamp, heading, tide, tide_station)
+          VALUES(:longitude, :latitude, :depth, :timestamp, :heading, :tide, :tide_station)
         `);
 
         callback();
@@ -158,6 +168,7 @@ export function createSqliteWriter(db: DatabaseSync) {
           timestamp: data.timestamp.epochMilliseconds,
           heading: data.heading ?? null,
           tide: data.tide ?? null,
+          tide_station: data.tideStation ?? null,
         });
         callback();
       } catch (err) {

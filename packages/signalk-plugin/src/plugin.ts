@@ -10,6 +10,8 @@ import { join } from "path";
 import { createCollector } from "./collector.js";
 import { createStatus } from "./status.js";
 import { startChartSafely } from "./chart.js";
+import { createTideStations, TIDE_REFRESH_MS } from "./tides.js";
+import { serverHost } from "./host.js";
 
 export default function createPlugin(app: ServerAPI): Plugin {
   let abortController: AbortController | undefined = undefined;
@@ -28,6 +30,21 @@ export default function createPlugin(app: ServerAPI): Plugin {
       const controller = new AbortController();
       abortController = controller;
       const db = createDB(join(app.getDataDirPath(), `bathymetry.sqlite`));
+
+      // The station a tide came from, and its datum, change slowly; resolve them
+      // in the background so recording a sounding can read the station without
+      // waiting on the tides API.
+      const tideStations = createTideStations(app, db, serverHost(app));
+      void tideStations.refresh();
+      const tideTimer = setInterval(
+        () => void tideStations.refresh(),
+        TIDE_REFRESH_MS,
+      );
+      tideTimer.unref();
+      controller.signal.addEventListener("abort", () =>
+        clearInterval(tideTimer),
+      );
+
       const chart = startChartSafely({
         app,
         config,
@@ -37,13 +54,14 @@ export default function createPlugin(app: ServerAPI): Plugin {
 
       const sqlite = createSqliteSource(app, db);
       const source = await settleSource({
-        findHistory: () => createHistorySource(app, config),
+        findHistory: () => createHistorySource(app, config, { tideStations }),
         sqlite,
         record: (signal) =>
           createCollector({
             app,
             config,
             writer: sqlite.createWriter!(),
+            tideStations,
             signal,
           }).catch((err: unknown) => {
             if (!signal.aborted) status.error(err as Error);

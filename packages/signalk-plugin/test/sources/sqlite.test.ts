@@ -16,6 +16,7 @@ const data = [
     heading: 0,
     // with a tide (water level above chart datum)
     tide: 0.5,
+    tideStation: "noaa/9414290",
   },
   // without heading
   {

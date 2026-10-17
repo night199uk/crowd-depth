@@ -3,6 +3,7 @@ import { PassThrough } from "stream";
 import { Config, depthReference } from "../config.js";
 import { Temporal } from "@js-temporal/polyfill";
 import { BathymetryData } from "../types.js";
+import { TideStations } from "../tides.js";
 import { bowBearing } from "./transforms.js";
 
 /** Maximum age of last position fix for a depth to be saved */
@@ -12,7 +13,11 @@ const ttl = 2000;
  * Read at the sounding's time; absent when no tides provider is configured. */
 const TIDE = "environment.tide.heightNow";
 
-export function createLiveStream(app: ServerAPI, config: Config) {
+export function createLiveStream(
+  app: ServerAPI,
+  config: Config,
+  tideStations?: TideStations,
+) {
   const path = `environment.depth.${config.path}` as Path;
   const { offset } = depthReference(config);
 
@@ -74,6 +79,7 @@ export function createLiveStream(app: ServerAPI, config: Config) {
               timestamp,
               heading,
               tide: freshValue(TIDE, timestamp),
+              tideStation: tideStations?.current()?.station,
             };
 
             app.debug(

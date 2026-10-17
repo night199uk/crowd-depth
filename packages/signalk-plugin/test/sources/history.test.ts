@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "vitest";
 import nock from "nock";
 import { Temporal } from "@js-temporal/polyfill";
 import { createHistorySource } from "../../src/sources/history.js";
+import { TideStations } from "../../src/tides.js";
 import { app, config } from "../helper.js";
 import { Timeframe } from "../../src/types.js";
 
@@ -74,6 +75,39 @@ test("pairs position, depth and heading, dropping rows without a position or dep
       depth: 9.9,
       heading: undefined,
       tide: 0.8,
+    },
+  ]);
+});
+
+// The provider records the tide but not the station it came from, so its
+// soundings are attributed to the station the server is using now.
+test("attributes soundings to the tide station the server is using", async () => {
+  const { app: testApp } = providerApp({
+    values: [
+      { path: "navigation.position", method: "first" },
+      { path: "environment.depth.depthFromTransducer", method: "min" },
+      { path: "environment.tide.heightNow", method: "first" },
+    ],
+    data: [["2025-01-01T12:00:00.000Z", [1, 2], 3.2, 0.5]],
+  });
+
+  const tideStations = {
+    current: () => ({ station: "noaa/9414290", datum: "MLLW" }),
+    refresh: async () => {},
+  } as TideStations;
+
+  const source = await createHistorySource(testApp, config, { tideStations });
+  const reader = await source?.createReader(new Timeframe(from, to));
+
+  expect(await reader!.toArray()).toEqual([
+    {
+      timestamp: Temporal.Instant.from("2025-01-01T12:00:00.000Z"),
+      longitude: 1,
+      latitude: 2,
+      depth: 3.2,
+      heading: undefined,
+      tide: 0.5,
+      tideStation: "noaa/9414290",
     },
   ]);
 });

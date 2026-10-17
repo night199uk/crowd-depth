@@ -36,6 +36,13 @@ export type BathymetryData = {
    * later; the stored depth itself stays below surface.
    */
   tide?: number;
+  /**
+   * The tide station `tide` was predicted from. The datum belongs to the station,
+   * not the sample, so it is held once in the `tide_stations` table rather than
+   * repeated on every sounding — and the reference, unlike the datum, follows a
+   * station change mid-voyage.
+   */
+  tideStation?: string;
 };
 
 export interface BathymetrySource {

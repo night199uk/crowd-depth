@@ -15,6 +15,8 @@ import {
 import { Temporal } from "@js-temporal/polyfill";
 import { BATHY_EPOCH } from "../constants.js";
 import fetch from "../fetch.js";
+import { serverHost } from "../host.js";
+import { TideStations } from "../tides.js";
 import { setTimeout as sleep } from "node:timers/promises";
 import { bowBearing } from "../streams/transforms.js";
 
@@ -28,7 +30,8 @@ export async function createHistorySource(
   config: Config,
   options: HistorySourceOptions = {},
 ): Promise<BathymetrySource | undefined> {
-  const history = await getHistoryAPI({ app, ...options });
+  const { tideStations } = options;
+  const history = await getHistoryAPI({ app, host: options.host });
 
   if (!history) return;
 
@@ -147,6 +150,10 @@ export async function createHistorySource(
               speedOverGround: column(row, SOG),
             }),
             tide: column(row, TIDE),
+            // The provider stores the tide the sounding was recorded against but
+            // not which station it came from, so attribute it to the station the
+            // server is using now — the best available, and the common case.
+            tideStation: tideStations?.current()?.station,
           };
         }
       })
@@ -251,6 +258,7 @@ export async function waitForHistorySource(
 export interface HistorySourceOptions {
   port?: number;
   host?: string;
+  tideStations?: TideStations;
 }
 
 export type HistoryAPIOptions = {
@@ -268,9 +276,7 @@ type URLSearchParamsOptions = Record<string, any>;
  */
 export async function getHistoryAPI({
   app,
-  // @ts-expect-error: app.config is not a public API
-  port = Number(process.env.PORT) || app.config?.settings?.port || 3000,
-  host = process.env.SIGNALK_HOST ?? `http://localhost:${port}/`,
+  host = serverHost(app),
 }: HistoryAPIOptions): Promise<HistoryApi | undefined> {
   try {
     // Try to get the built-in history provider API first. It either returns the API or throws

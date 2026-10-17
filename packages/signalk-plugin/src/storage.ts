@@ -40,6 +40,21 @@ export function createDB(filename: string): DatabaseSync {
       db.exec(`ALTER TABLE bathymetry ADD COLUMN tide REAL`);
     },
     () => {
+      // The tide value stored per sounding is ambiguous on its own, so record
+      // the station it was predicted from. The datum lives once per station in
+      // `tide_stations` rather than being repeated across every row — a station's
+      // datum is a property of the station, and the reference (not a per-voyage
+      // field) tracks a station change mid-track.
+      db.exec(`
+        ALTER TABLE bathymetry ADD COLUMN tide_station TEXT;
+
+        CREATE TABLE tide_stations(
+          station TEXT PRIMARY KEY,
+          datum TEXT NOT NULL
+        );
+      `);
+    },
+    () => {
       // The chart layer's tile pyramid, derived from the soundings above; see
       // tiles/store.ts.
       db.exec(`
